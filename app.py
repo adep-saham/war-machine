@@ -73,29 +73,49 @@ def init_db():
     conn.close()
 
 def upsert_dim_product(df: pd.DataFrame):
-    conn = get_conn()
     df = df.copy()
-    df["product_id"] = df["product_id"].astype(str)
-    df[["product_name","category"]] = df[["product_name","category"]].fillna("")
-    df.to_sql("dim_product", conn, if_exists="append", index=False)
-    # de-dup keep first
-    conn.execute("""
-        DELETE FROM dim_product
-        WHERE rowid NOT IN (
-            SELECT MIN(rowid) FROM dim_product GROUP BY product_id
-        )
-    """)
+
+    # Normalisasi
+    df["product_id"] = df["product_id"].astype(str).str.upper().str.strip()
+    df["product_name"] = df["product_name"].astype(str).fillna("").str.strip()
+    df["category"] = df["category"].astype(str).fillna("").str.strip()
+    df["pecahan_gram"] = pd.to_numeric(df["pecahan_gram"], errors="coerce").fillna(0.0)
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    sql = """
+    INSERT INTO dim_product (product_id, product_name, pecahan_gram, category)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(product_id) DO UPDATE SET
+        product_name=excluded.product_name,
+        pecahan_gram=excluded.pecahan_gram,
+        category=excluded.category
+    """
+
+    rows = list(df[["product_id","product_name","pecahan_gram","category"]].itertuples(index=False, name=None))
+    cur.executemany(sql, rows)
+
     conn.commit()
     conn.close()
+
 
 def upsert_dim_competitor(names):
     conn = get_conn()
     cur = conn.cursor()
     for n in names:
-        cid = n.strip().upper().replace(" ", "_")
-        cur.execute("INSERT OR IGNORE INTO dim_competitor(competitor_id, competitor_name) VALUES (?,?)", (cid, n.strip()))
+        n2 = (n or "").strip()
+        if not n2:
+            continue
+        cid = n2.upper().replace(" ", "_")
+        cur.execute(
+            "INSERT INTO dim_competitor(competitor_id, competitor_name) VALUES (?,?) "
+            "ON CONFLICT(competitor_id) DO UPDATE SET competitor_name=excluded.competitor_name",
+            (cid, n2)
+        )
     conn.commit()
     conn.close()
+
 
 def upsert_guardrail(product_id, hpp, floor_margin_pct, floor_price):
     conn = get_conn()
