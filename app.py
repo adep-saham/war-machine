@@ -634,7 +634,7 @@ with tabs[2]:
 
                 view = war[show_cols].copy()
                 view["delta_market"] = view["delta_market"].round(0)
-                view["gap_pct"] = (view["gap_pct"]*100).round(2)
+               
                 view = view.sort_values(["status","war_score"], ascending=[False, False])
 
                 st.markdown("### 📌 War Table (snapshot terbaru)")
