@@ -549,20 +549,60 @@ with tabs[2]:
                 mode = st.selectbox("Mode strategi", ["DEFENSIVE","NEUTRAL","AGGRESSIVE"], index=0)
 
                 # Recommendation
-                recs = []
+                # =========================
+                # UX GUARDRAIL LOGIC (NEW)
+                # =========================
+                market_recs = []
+                final_prices = []
+                policy_status = []
+                policy_notes = []
+                
                 for _, r in war.iterrows():
-                    rec_price, floor = recommend_price(
-                        our_eff=float(r["eff_price"]),
-                        min_comp_eff=float(r["min_comp_eff"]),
-                        guard_floor_price=float(r["floor_price"]),
-                        hpp=float(r["hpp"]),
-                        floor_margin_pct=float(r["floor_margin_pct"]),
-                        mode=mode
-                    )
-                    recs.append((rec_price, floor))
-                war["rec_eff_price"] = [x[0] for x in recs]
-                war["floor_guard"] = [x[1] for x in recs]
-                war["delta_to_rec"] = war["rec_eff_price"] - war["eff_price"]
+                
+                    # --- 1. MARKET RECOMMENDATION (tanpa guardrail)
+                    if pd.isna(r["min_comp_eff"]):
+                        market_price = None
+                    else:
+                        if mode == "AGGRESSIVE":
+                            market_price = r["min_comp_eff"] - 500
+                        elif mode == "NEUTRAL":
+                            market_price = r["eff_price"] - (r["eff_price"] - r["min_comp_eff"]) * 0.5
+                        else:  # DEFENSIVE
+                            market_price = r["min_comp_eff"]
+                
+                    # --- 2. POLICY FLOOR
+                    floor_by_margin = r["hpp"] * (1 + r["floor_margin_pct"]/100) if r["hpp"] > 0 else 0
+                    policy_floor = max(r["floor_price"], floor_by_margin)
+                
+                    # --- 3. FINAL DECISION
+                    if market_price is None:
+                        final_price = None
+                        status = "NO DATA"
+                        note = "Tidak ada data kompetitor"
+                    elif market_price >= policy_floor:
+                        final_price = market_price
+                        status = "ALLOWED"
+                        note = "Harga pasar masih sesuai kebijakan"
+                    else:
+                        final_price = policy_floor
+                        status = "BLOCKED"
+                        note = "Harga pasar ditolak oleh kebijakan (guardrail aktif)"
+                
+                    market_recs.append(market_price)
+                    final_prices.append(final_price)
+                    policy_status.append(status)
+                    policy_notes.append(note)
+                
+                war["market_rec_price"] = market_recs
+                war["policy_floor_price"] = war.apply(
+                    lambda r: max(r["floor_price"], r["hpp"] * (1 + r["floor_margin_pct"]/100)) if r["hpp"] > 0 else r["floor_price"],
+                    axis=1
+                )
+                war["final_allowed_price"] = final_prices
+                war["policy_status"] = policy_status
+                war["policy_note"] = policy_notes
+                war["delta_market"] = war["market_rec_price"] - war["eff_price"]
+
 
                 # KPIs top
                 k1, k2, k3, k4 = st.columns(4)
@@ -580,13 +620,20 @@ with tabs[2]:
                 st.divider()
 
                 # Table view
-                show_cols = [
+               show_cols = [
                     "product_id","product_name","pecahan_gram",
-                    "eff_price","min_comp_eff","min_competitor",
-                    "gap_rp","gap_pct","war_score","status",
-                    "rec_eff_price","delta_to_rec","floor_guard"
+                    "eff_price",
+                    "market_rec_price",
+                    "policy_floor_price",
+                    "final_allowed_price",
+                    "delta_market",
+                    "policy_status",
+                    "policy_note",
+                    "war_score","status"
                 ]
+
                 view = war[show_cols].copy()
+                view["delta_market"] = view["delta_market"].round(0)
                 view["gap_pct"] = (view["gap_pct"]*100).round(2)
                 view = view.sort_values(["status","war_score"], ascending=[False, False])
 
