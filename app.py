@@ -364,27 +364,104 @@ with tabs[1]:
                         st.success("Harga competitor tersimpan.")
 
     st.divider()
-    st.subheader("Upload harga massal (CSV)")
-    st.caption("Kolom wajib: source_type, competitor_id (boleh kosong untuk COMPANY), product_id, price_sell, price_buy, promo_cashback, promo_discount, shipping_fee, admin_fee, notes")
-    up_prices = st.file_uploader("Upload CSV harga", type=["csv"], key="upload_prices")
-    if up_prices:
-        dfu = pd.read_csv(up_prices)
-        required = {"source_type","product_id","price_sell","price_buy","promo_cashback","promo_discount","shipping_fee","admin_fee","notes"}
-        if not required.issubset(set(dfu.columns)):
-            st.error(f"Kolom kurang. Wajib: {required}")
-        else:
-            dfu["ts"] = datetime.utcnow().isoformat()
-            if "competitor_id" not in dfu.columns:
-                dfu["competitor_id"] = None
-            dfu["source_type"] = dfu["source_type"].astype(str).str.upper().str.strip()
-            dfu["product_id"] = dfu["product_id"].astype(str).str.upper().str.strip()
-            dfu["competitor_id"] = dfu["competitor_id"].where(dfu["competitor_id"].notna(), None)
-            insert_prices(dfu[[
-                "ts","source_type","competitor_id","product_id",
-                "price_sell","price_buy","promo_cashback","promo_discount",
+    st.subheader("Upload Harga Massal (CSV) — DIPISAH")
+    
+    prod = read_table("SELECT product_id FROM dim_product")
+    valid_products = set(prod["product_id"].tolist())
+    
+    col1, col2 = st.columns(2)
+    
+    # =========================
+    # UPLOAD COMPANY
+    # =========================
+    with col1:
+        st.markdown("### 🔵 Upload Harga COMPANY")
+        st.caption("Kolom wajib: product_id, price_sell, price_buy, promo_cashback, promo_discount, shipping_fee, admin_fee, notes")
+    
+        up_company = st.file_uploader(
+            "Upload CSV harga COMPANY",
+            type=["csv"],
+            key="upload_company_csv"
+        )
+    
+        if up_company:
+            df = pd.read_csv(up_company)
+    
+            required = {
+                "product_id","price_sell","price_buy",
+                "promo_cashback","promo_discount",
                 "shipping_fee","admin_fee","notes"
-            ]])
-            st.success("Harga massal tersimpan.")
+            }
+    
+            if not required.issubset(df.columns):
+                st.error(f"❌ Kolom kurang. Wajib: {required}")
+            else:
+                df = df.copy()
+                df["source_type"] = "COMPANY"
+                df["competitor_id"] = None
+                df["ts"] = datetime.utcnow().isoformat()
+                df["product_id"] = df["product_id"].astype(str).str.upper().str.strip()
+    
+                # validasi product
+                invalid = set(df["product_id"]) - valid_products
+                if invalid:
+                    st.error(f"❌ Product ID tidak dikenal: {invalid}")
+                else:
+                    insert_prices(df[[
+                        "ts","source_type","competitor_id","product_id",
+                        "price_sell","price_buy",
+                        "promo_cashback","promo_discount",
+                        "shipping_fee","admin_fee","notes"
+                    ]])
+                    st.success(f"✅ Harga COMPANY tersimpan ({len(df)} baris).")
+    
+    # =========================
+    # UPLOAD COMPETITOR
+    # =========================
+    with col2:
+        st.markdown("### 🔴 Upload Harga COMPETITOR")
+        st.caption("Kolom wajib: competitor_id, product_id, price_sell, price_buy, promo_cashback, promo_discount, shipping_fee, admin_fee, notes")
+    
+        up_comp = st.file_uploader(
+            "Upload CSV harga COMPETITOR",
+            type=["csv"],
+            key="upload_competitor_csv"
+        )
+    
+        if up_comp:
+            df = pd.read_csv(up_comp)
+    
+            required = {
+                "competitor_id","product_id","price_sell","price_buy",
+                "promo_cashback","promo_discount",
+                "shipping_fee","admin_fee","notes"
+            }
+    
+            if not required.issubset(df.columns):
+                st.error(f"❌ Kolom kurang. Wajib: {required}")
+            else:
+                df = df.copy()
+                df["source_type"] = "COMPETITOR"
+                df["competitor_id"] = df["competitor_id"].astype(str).str.upper().str.strip()
+                df["product_id"] = df["product_id"].astype(str).str.upper().str.strip()
+                df["ts"] = datetime.utcnow().isoformat()
+    
+                # validasi product
+                invalid = set(df["product_id"]) - valid_products
+                if invalid:
+                    st.error(f"❌ Product ID tidak dikenal: {invalid}")
+                else:
+                    # pastikan competitor ada di master
+                    upsert_dim_competitor(df["competitor_id"].unique())
+    
+                    insert_prices(df[[
+                        "ts","source_type","competitor_id","product_id",
+                        "price_sell","price_buy",
+                        "promo_cashback","promo_discount",
+                        "shipping_fee","admin_fee","notes"
+                    ]])
+                    st.success(f"✅ Harga COMPETITOR tersimpan ({len(df)} baris).")
+
 
 # -------------------------
 # TAB 3: WAR ROOM
