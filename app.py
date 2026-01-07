@@ -620,16 +620,16 @@ with tabs[2]:
                 st.divider()
 
                 # Table view
-               show_cols = [
-                    "product_id","product_name","pecahan_gram",
-                    "eff_price",
-                    "market_rec_price",
-                    "policy_floor_price",
-                    "final_allowed_price",
-                    "delta_market",
-                    "policy_status",
-                    "policy_note",
-                    "war_score","status"
+                show_cols = [
+                       "product_id","product_name","pecahan_gram",
+                       "eff_price",
+                       "market_rec_price",
+                       "policy_floor_price",
+                       "final_allowed_price",
+                       "delta_market",
+                       "policy_status",
+                       "policy_note",
+                       "war_score","status"
                 ]
 
                 view = war[show_cols].copy()
