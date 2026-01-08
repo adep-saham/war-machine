@@ -1,87 +1,32 @@
 import streamlit as st
-import pandas as pd
-import os
 
-# ======================
-# CONFIG
-# ======================
-DATA_DIR = "data"
-
-
-# ======================
-# HELPER
-# ======================
-def safe_read_csv(filename):
-    path = os.path.join(DATA_DIR, filename)
-    if os.path.exists(path):
-        return pd.read_csv(path)
-    return None
+from loaders.data_loader import safe_read_csv
+from engines.pricing_engine import build_pricing_snapshot
+from engines.guardrail_engine import apply_guardrail
+from engines.market_share_engine import apply_market_share
+from utils.formatters import format_idr
 
 
-def format_idr(x):
-    if pd.isna(x):
-        return "-"
-    try:
-        return f"{int(x):,}".replace(",", ".")
-    except:
-        return "-"
-
-
-# ======================
-# MAIN WAR ROOM
-# ======================
 def render_war_room():
-    st.subheader("⚔️ War Room")
-    st.caption("Snapshot sederhana: company vs competitor termurah")
+    st.subheader("⚔️ War Room – Decision Engine")
 
-    # ===== LOAD DATA HASIL UPLOAD =====
     master = safe_read_csv("master_product.csv")
     price_company = safe_read_csv("price_company.csv")
     price_comp = safe_read_csv("price_competitor.csv")
+    sales = safe_read_csv("sales_internal.csv")
+    market = safe_read_csv("market_size.csv")
 
-    # ===== VALIDASI DATA =====
     if master is None or price_company is None or price_comp is None:
-        st.warning("⚠️ Data belum lengkap. Silakan upload semua data di tab Upload Data.")
+        st.warning("Upload data wajib terlebih dahulu.")
         return
 
-    # ===== JOIN MASTER + HARGA COMPANY =====
-    war = price_company.merge(
-        master[["product_id", "product_name", "pecahan_gram"]],
-        on="product_id",
-        how="left"
-    )
+    war = build_pricing_snapshot(price_company, master, price_comp)
+    war = apply_guardrail(war)
+    war = apply_market_share(war, sales, market)
 
-    # ===== HARGA COMPETITOR TERENDAH =====
-    comp_min = (
-        price_comp
-        .groupby("product_id", as_index=False)["price_sell"]
-        .min()
-        .rename(columns={"price_sell": "min_comp_price"})
-    )
-
-    war = war.merge(comp_min, on="product_id", how="left")
-
-    # ===== HITUNG GAP =====
-    war["gap_price"] = war["price_sell"] - war["min_comp_price"]
-
-    # ===== STATUS WAR =====
-    def war_status(row):
-        if pd.isna(row["min_comp_price"]):
-            return "🟢 DEFENSIVE"
-        if row["gap_price"] > 0:
-            return "🔴 ATTACK"
-        return "🟢 DEFENSIVE"
-
-    war["status"] = war.apply(war_status, axis=1)
-
-    # ===== FORMAT ANGKA UNTUK DISPLAY =====
-    for col in ["price_sell", "min_comp_price", "gap_price"]:
+    for col in ["price_sell", "min_comp_price", "gap_price", "floor_price"]:
         war[col] = war[col].apply(format_idr)
 
-    # ===== SORT: PALING BERBAHAYA DI ATAS =====
-    war = war.sort_values("status", ascending=False)
-
-    # ===== TAMPILKAN TABEL =====
     st.dataframe(
         war[
             [
@@ -91,10 +36,12 @@ def render_war_room():
                 "price_sell",
                 "min_comp_price",
                 "gap_price",
+                "guardrail_status",
+                "market_share_pct",
+                "share_at_risk_pct",
+                "impact_level",
                 "status",
             ]
         ],
         use_container_width=True
     )
-
-    st.caption("🔴 ATTACK = harga company lebih mahal dari competitor termurah")
