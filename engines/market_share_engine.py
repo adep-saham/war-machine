@@ -1,6 +1,6 @@
 def compute_market_share_impact(war, sales, market):
 
-    if sales.empty or market.empty:
+    if sales is None or market is None or sales.empty or market.empty:
         war["market_share_pct"] = None
         war["share_at_risk_pct"] = None
         war["impact_level"] = "NO DATA"
