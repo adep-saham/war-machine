@@ -1,26 +1,42 @@
-def compute_market_share_impact(war, sales, market):
+def apply_market_share(war, sales, market):
+    war["market_share_pct"] = None
+    war["share_at_risk_pct"] = None
+    war["impact_level"] = "NO DATA"
 
-    if sales is None or market is None or sales.empty or market.empty:
-        war["market_share_pct"] = None
-        war["share_at_risk_pct"] = None
-        war["impact_level"] = "NO DATA"
+    if sales is None or market is None:
         return war
 
-    latest = sales["date"].max()
+    last_date = sales["date"].max()
 
-    s = sales[sales["date"] == latest].groupby("product_id")["volume_gram"].sum()
-    m = market[market["date"] == latest].groupby("product_id")["estimated_market_volume"].sum()
-
-    war["market_share_pct"] = war["product_id"].map(s / m * 100)
-
-    def risk(row):
-        if row["status"] == "ATTACK" and row["policy_status"] == "BLOCKED":
-            return row["market_share_pct"] * 0.5
-        return row["market_share_pct"] * 0.1
-
-    war["share_at_risk_pct"] = war.apply(risk, axis=1)
-    war["impact_level"] = war["share_at_risk_pct"].apply(
-        lambda x: "HIGH" if x > 5 else "MED" if x > 2 else "LOW"
+    sales_latest = (
+        sales[sales["date"] == last_date]
+        .groupby("product_id")["volume_gram"]
+        .sum()
     )
+
+    market_latest = (
+        market[market["date"] == last_date]
+        .groupby("product_id")["estimated_market_volume"]
+        .sum()
+    )
+
+    for i, r in war.iterrows():
+        pid = r["product_id"]
+        if pid in sales_latest and pid in market_latest:
+            share = sales_latest[pid] / market_latest[pid] * 100
+            war.at[i, "market_share_pct"] = round(share, 2)
+
+            if r["status"] == "ATTACK" and r["guardrail_status"] == "BLOCKED":
+                risk = share * 0.5
+            elif r["status"] == "ATTACK":
+                risk = share * 0.2
+            else:
+                risk = share * 0.05
+
+            war.at[i, "share_at_risk_pct"] = round(risk, 2)
+
+            war.at[i, "impact_level"] = (
+                "HIGH" if risk > 5 else "MED" if risk > 2 else "LOW"
+            )
 
     return war
