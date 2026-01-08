@@ -8,6 +8,8 @@ from engines.market_share_engine import apply_market_share
 from engines.intent_engine import detect_loss_intent
 from engines.dcz_engine import apply_dont_compete_zone
 from engines.counter_move_engine import generate_counter_moves
+from engines.promo_simulator import simulate_promo_portfolio
+
 from utils.formatters import format_idr
 
 
@@ -34,7 +36,6 @@ def priority_score(row):
     impact_w = {"HIGH": 3, "MED": 2, "LOW": 1}.get(row.get("impact_level"), 0.5)
     risk = row.get("share_at_risk_pct", 0) or 0
     bonus = 1 if row.get("compete_decision") == "FIGHT" else 0
-    # intent bias: market grab lebih prioritas, bait lebih rendah
     intent = row.get("competitor_intent")
     intent_bonus = 0.5 if intent == "MARKET_GRAB" else (-0.3 if intent == "BAIT / SIGNAL" else 0)
     return impact_w * (1 + risk) + bonus + intent_bonus
@@ -45,15 +46,15 @@ def priority_score(row):
 # ======================
 def render_war_room():
     st.subheader("⚔️ War Room – Command Center")
-    st.caption("Pricing + Guardrail + Market Impact + Intent + DCZ + Counter-Move (aksi konkret)")
+    st.caption("Pricing + Guardrail + Market Impact + Intent + DCZ + Counter-Move + Promo Simulator")
 
     # ----------------------
-    # Small controls (UX)
+    # Controls
     # ----------------------
-    with st.expander("⚙️ Pengaturan Counter-Move (opsional)", expanded=False):
-        max_disc = st.slider("Batas rekomendasi diskon (untuk ladder)", 0.0, 5.0, 2.0, 0.5) / 100.0
-        base_days = st.slider("Durasi default (hari)", 1, 14, 5, 1)
-        extreme_gap = st.number_input("Extreme gap untuk deteksi BAIT (Rp)", value=500_000, step=50_000)
+    with st.expander("⚙️ Pengaturan Counter-Move", expanded=False):
+        max_disc = st.slider("Batas diskon ladder (%)", 0.0, 5.0, 2.0, 0.5) / 100
+        base_days = st.slider("Durasi default (hari)", 1, 14, 5)
+        extreme_gap = st.number_input("Extreme gap (Rp) untuk BAIT", value=500_000, step=50_000)
 
     # ======================
     # LOAD DATA
@@ -65,7 +66,7 @@ def render_war_room():
     market = safe_read_csv("market_size.csv")
 
     if master is None or price_company is None or price_comp is None:
-        st.warning("⚠️ Upload: master_product.csv, price_company.csv, price_competitor.csv terlebih dahulu.")
+        st.warning("⚠️ Upload: master_product.csv, price_company.csv, price_competitor.csv")
         return
 
     # ======================
@@ -88,9 +89,46 @@ def render_war_room():
     war["priority_score"] = war.apply(priority_score, axis=1)
 
     # ======================
-    # COUNTER MOVE GENERATOR (NEW)
+    # COUNTER MOVE
     # ======================
-    war = generate_counter_moves(war, max_discount_pct=max_disc, base_duration_days=base_days)
+    war = generate_counter_moves(
+        war,
+        max_discount_pct=max_disc,
+        base_duration_days=base_days
+    )
+
+    # ======================
+    # PROMO SIMULATOR (ANTI PRICE WAR)
+    # ======================
+    promo_rows = []
+
+    for _, r in war.iterrows():
+        try:
+            base_price = r.get("price_sell")
+            base_cost = r.get("cost_unit") or r.get("floor_price")
+            volume = r.get("sales_volume", 1)
+
+            if base_price and base_cost:
+                promos = simulate_promo_portfolio(
+                    base_price=float(base_price),
+                    base_cost=float(base_cost),
+                    volume=int(volume)
+                )
+                best = promos[0] if promos else None
+            else:
+                best = None
+        except Exception:
+            best = None
+
+        promo_rows.append({
+            "promo_best": getattr(best, "promo_type", None),
+            "promo_effective_price": getattr(best, "effective_price", None),
+            "promo_margin_pct": getattr(best, "margin_pct", None),
+            "promo_war_risk": getattr(best, "war_risk", None),
+            "promo_rationale": getattr(best, "rationale", None),
+        })
+
+    war = pd.concat([war.reset_index(drop=True), pd.DataFrame(promo_rows)], axis=1)
 
     # ======================
     # KPI HEADER
@@ -106,13 +144,15 @@ def render_war_room():
     st.divider()
 
     # ======================
-    # DISPLAY COPY
+    # DISPLAY
     # ======================
     view = war.sort_values("priority_score", ascending=False).copy()
 
-    # format angka display only
-    for col in ["price_sell", "min_comp_price", "gap_price", "floor_price",
-                "sim_price_5", "sim_price_10", "sim_price_20"]:
+    for col in [
+        "price_sell", "min_comp_price", "gap_price", "floor_price",
+        "sim_price_5", "sim_price_10", "sim_price_20",
+        "promo_effective_price"
+    ]:
         if col in view.columns:
             view[col] = view[col].apply(format_idr)
 
@@ -121,9 +161,9 @@ def render_war_room():
             view[col] = view[col].apply(lambda x: "✅" if x else "❌")
 
     # ======================
-    # DECISION SUMMARY (RINGKAS, TIDAK PANJANG)
+    # DECISION SUMMARY
     # ======================
-    st.subheader("📊 Decision Summary (Ringkas)")
+    st.subheader("📊 Decision Summary")
 
     summary_cols = [
         "product_id",
@@ -137,60 +177,64 @@ def render_war_room():
         "counter_move_short",
         "counter_channel",
         "counter_duration_days",
+        "promo_best",
+        "promo_war_risk",
     ]
 
     st.dataframe(view[summary_cols], use_container_width=True, hide_index=True)
 
     # ======================
-    # PRIORITY ACTION BOARD (TOP 5)
+    # ACTION BOARD
     # ======================
     st.subheader("🚨 Action Board (Top 5)")
 
-    top = war.sort_values("priority_score", ascending=False).head(5)
+    top = view.head(5)
     if top.empty:
         st.success("✅ Tidak ada prioritas kritikal.")
     else:
         for _, r in top.iterrows():
-            badge = "🔴" if (r.get("compete_decision") == "FIGHT" and r.get("impact_level") == "HIGH") else "🟠" if r.get("compete_decision") == "FIGHT" else "🟢"
-            share = r.get("market_share_pct", None)
-            risk = r.get("share_at_risk_pct", None)
-            share_txt = "-" if share is None or (isinstance(share, float) and pd.isna(share)) else f"{share:.2f}%"
-            risk_txt = "-" if risk is None or (isinstance(risk, float) and pd.isna(risk)) else f"{risk:.2f}%"
-
             st.info(
-                f"{badge} **{r.get('product_name')} ({r.get('product_id')})**  \n"
-                f"Intent: **{r.get('competitor_intent')}** | DCZ: **{r.get('compete_decision')}** | Impact: **{r.get('impact_level')}** | Share: {share_txt} | Risk: {risk_txt}  \n\n"
+                f"**{r.get('product_name')} ({r.get('product_id')})**  \n"
+                f"Intent: **{r.get('competitor_intent')}** | DCZ: **{r.get('compete_decision')}** | Impact: **{r.get('impact_level')}**  \n\n"
                 f"➡️ **Counter-Move**: **{r.get('counter_move')}**  \n"
-                f"📍 Channel: **{r.get('counter_channel')}** | ⏱️ Durasi: **{r.get('counter_duration_days')} hari**"
+                f"🎁 **Promo Alternatif**: **{r.get('promo_best','-')}** (Risk: {r.get('promo_war_risk','-')})  \n"
+                f"📍 Channel: **{r.get('counter_channel')}** | ⏱️ **{r.get('counter_duration_days')} hari**"
             )
 
     # ======================
-    # DETAIL (EXPANDER) — lengkap tapi tidak mengganggu
+    # DETAIL DRILL DOWN
     # ======================
-    st.subheader("🔍 Detail per Produk (Drill-down)")
+    st.subheader("🔍 Detail per Produk")
 
     for _, r in view.iterrows():
         with st.expander(f"{r['product_name']} ({r['product_id']})"):
             st.markdown(f"""
 **Harga Saat Ini**: {r.get('price_sell','-')}  
-**Harga Kompetitor Termurah**: {r.get('min_comp_price','-')}  
-**Gap**: {r.get('gap_price','-')}  
+**Harga Kompetitor**: {r.get('min_comp_price','-')}  
+**Gap Harga**: {r.get('gap_price','-')}  
 
-**Impact Level**: {r.get('impact_level','-')}  
 **Intent Kompetitor**: **{r.get('competitor_intent','-')}**  
 **DCZ Decision**: **{r.get('compete_decision','-')}**  
-**Alasan DCZ**: {r.get('dcz_reason','-')}  
-
-**Counter-Move (aksi konkret)**: **{r.get('counter_move','-')}**  
-**Channel**: {r.get('counter_channel','-')} | **Durasi**: {r.get('counter_duration_days','-')} hari  
-**Rationale**: {r.get('counter_rationale','-')}
+**Counter-Move**: **{r.get('counter_move','-')}**  
+Channel: {r.get('counter_channel','-')} | Durasi: {r.get('counter_duration_days','-')} hari  
 """)
 
-            st.markdown("**Simulasi Penurunan Harga (What-if)**")
+            st.markdown("**Promo Simulator (Anti Price War)**")
             st.write({
-                "Turun 0.5%": f"{r.get('sim_price_5','-')} ({r.get('sim_ok_5','-')})",
-                "Turun 1%": f"{r.get('sim_price_10','-')} ({r.get('sim_ok_10','-')})",
-                "Turun 2%": f"{r.get('sim_price_20','-')} ({r.get('sim_ok_20','-')})",
+                "Promo": r.get("promo_best"),
+                "Effective Price": format_idr(r.get("promo_effective_price")) if r.get("promo_effective_price") else "-",
+                "Margin (%)": r.get("promo_margin_pct"),
+                "War Risk": r.get("promo_war_risk"),
+            })
+            st.caption(r.get("promo_rationale", ""))
+
+            st.markdown("**Simulasi Penurunan Harga**")
+            st.write({
+                "Turun 0.5%": f"{r.get('sim_price_5')} ({r.get('sim_ok_5')})",
+                "Turun 1%": f"{r.get('sim_price_10')} ({r.get('sim_ok_10')})",
+                "Turun 2%": f"{r.get('sim_price_20')} ({r.get('sim_ok_20')})",
             })
 
-    st.caption("Counter-Move Generator menghasilkan aksi yang bisa dieksekusi (channel + durasi + alasan), bukan sekadar label.")
+    st.caption("War Room ini menghasilkan keputusan yang bisa dieksekusi — bukan sekadar analisa.")
+
+
