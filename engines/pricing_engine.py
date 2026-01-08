@@ -1,15 +1,24 @@
-def effective_price(row):
-    return (
-        row["price_sell"]
-        - row["promo_cashback"]
-        - row["promo_discount"]
-        + row["shipping_fee"]
-        + row["admin_fee"]
+import pandas as pd
+
+def build_pricing_snapshot(price_company, master, price_comp):
+    war = price_company.merge(
+        master[["product_id", "product_name", "pecahan_gram"]],
+        on="product_id",
+        how="left"
     )
 
-def apply_guardrail(market_price, floor_price):
-    if market_price is None:
-        return None, "NO DATA"
-    if market_price < floor_price:
-        return floor_price, "BLOCKED"
-    return market_price, "ALLOWED"
+    comp_min = (
+        price_comp
+        .groupby("product_id", as_index=False)["price_sell"]
+        .min()
+        .rename(columns={"price_sell": "min_comp_price"})
+    )
+
+    war = war.merge(comp_min, on="product_id", how="left")
+    war["gap_price"] = war["price_sell"] - war["min_comp_price"]
+
+    war["status"] = war["gap_price"].apply(
+        lambda x: "ATTACK" if pd.notna(x) and x > 0 else "DEFENSIVE"
+    )
+
+    return war
