@@ -41,6 +41,21 @@ def priority_score(row):
     return impact_w * (1 + risk) + bonus + intent_bonus
 
 
+def promo_allowed(promo_type: str, max_discount_pct: float) -> bool:
+    """
+    Guardrail promo:
+    - DISCOUNT / CASHBACK dianggap price-cut = 1%
+    - BUNDLE / VALUE = 0% (non-price)
+    """
+    if promo_type is None:
+        return False
+
+    promo_type = promo_type.upper()
+    if "DISCOUNT" in promo_type or "CASHBACK" in promo_type:
+        return max_discount_pct >= 1
+    return True
+
+
 # ======================
 # WAR ROOM
 # ======================
@@ -52,8 +67,8 @@ def render_war_room():
     # Controls
     # ----------------------
     with st.expander("⚙️ Pengaturan Counter-Move", expanded=False):
-        max_disc = st.slider("Batas diskon ladder (%)", 0.0, 5.0, 2.0, 0.5) / 100
-        base_days = st.slider("Durasi default (hari)", 1, 14, 5)
+        max_disc = st.slider("Batas diskon ladder (%)", 0.0, 5.0, 0.5, 0.5)
+        base_days = st.slider("Durasi default (hari)", 1, 14, 3)
         extreme_gap = st.number_input("Extreme gap (Rp) untuk BAIT", value=500_000, step=50_000)
 
     # ======================
@@ -93,12 +108,12 @@ def render_war_room():
     # ======================
     war = generate_counter_moves(
         war,
-        max_discount_pct=max_disc,
+        max_discount_pct=max_disc / 100,
         base_duration_days=base_days
     )
 
     # ======================
-    # PROMO SIMULATOR
+    # PROMO SIMULATOR (SLIDER AWARE)
     # ======================
     promo_rows = []
 
@@ -108,15 +123,22 @@ def render_war_room():
             base_cost = r.get("cost_unit") or r.get("floor_price")
             volume = r.get("sales_volume", 1)
 
+            best = None
             if base_price and base_cost:
                 promos = simulate_promo_portfolio(
                     base_price=float(base_price),
                     base_cost=float(base_cost),
                     volume=int(volume)
                 )
-                best = promos[0] if promos else None
-            else:
-                best = None
+
+                # 🔥 FILTER PROMO BERDASARKAN SLIDER
+                filtered = [
+                    p for p in promos
+                    if promo_allowed(p.promo_type, max_disc)
+                ]
+
+                best = filtered[0] if filtered else None
+
         except Exception:
             best = None
 
@@ -126,6 +148,7 @@ def render_war_room():
             "promo_margin_pct": getattr(best, "margin_pct", None),
             "promo_war_risk": getattr(best, "war_risk", None),
             "promo_rationale": getattr(best, "rationale", None),
+            "promo_valid_days": base_days,
         })
 
     war = pd.concat([war.reset_index(drop=True), pd.DataFrame(promo_rows)], axis=1)
@@ -148,15 +171,15 @@ def render_war_room():
     # ======================
     st.subheader("🎁 Promo Simulator – Quick View")
 
-    promo_view_cols = [
+    promo_view = war[[
         "product_name",
         "promo_best",
         "promo_war_risk",
         "promo_margin_pct",
         "promo_effective_price",
-    ]
+        "promo_valid_days",
+    ]].copy()
 
-    promo_view = war[promo_view_cols].copy()
     promo_view["promo_effective_price"] = promo_view["promo_effective_price"].apply(
         lambda x: format_idr(x) if x else "-"
     )
@@ -164,25 +187,15 @@ def render_war_room():
     st.dataframe(promo_view, use_container_width=True, hide_index=True)
 
     # ======================
-    # DISPLAY
-    # ======================
-    view = war.sort_values("priority_score", ascending=False).copy()
-
-    for col in [
-        "price_sell", "min_comp_price", "gap_price", "floor_price",
-        "sim_price_5", "sim_price_10", "sim_price_20",
-    ]:
-        if col in view.columns:
-            view[col] = view[col].apply(format_idr)
-
-    for col in ["sim_ok_5", "sim_ok_10", "sim_ok_20"]:
-        if col in view.columns:
-            view[col] = view[col].apply(lambda x: "✅" if x else "❌")
-
-    # ======================
     # DECISION SUMMARY
     # ======================
     st.subheader("📊 Decision Summary")
+
+    view = war.sort_values("priority_score", ascending=False).copy()
+
+    for col in ["price_sell", "min_comp_price", "gap_price"]:
+        if col in view.columns:
+            view[col] = view[col].apply(format_idr)
 
     summary_cols = [
         "product_id",
@@ -207,8 +220,7 @@ def render_war_room():
     # ======================
     st.subheader("🚨 Action Board (Top 5)")
 
-    top = view.head(5)
-    for _, r in top.iterrows():
+    for _, r in view.head(5).iterrows():
         st.info(
             f"**{r.get('product_name')} ({r.get('product_id')})**  \n"
             f"Intent: **{r.get('competitor_intent')}** | DCZ: **{r.get('compete_decision')}** | Impact: **{r.get('impact_level')}**  \n\n"
@@ -240,7 +252,8 @@ def render_war_room():
                 "Effective Price": format_idr(r.get("promo_effective_price")) if r.get("promo_effective_price") else "-",
                 "Margin (%)": r.get("promo_margin_pct"),
                 "War Risk": r.get("promo_war_risk"),
+                "Valid (hari)": r.get("promo_valid_days"),
             })
             st.caption(r.get("promo_rationale", ""))
 
-    st.caption("War Room = decision engine. Promo = senjata, bukan diskon panik.")
+    st.caption("War Room = command center. Slider = guardrail. Promo = senjata strategis.")
