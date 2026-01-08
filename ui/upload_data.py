@@ -39,7 +39,7 @@ def render_upload_data():
     upload_csv(
         "Harga Competitor",
         "price_competitor.csv",
-        ["competitor_name","product_id","price_sell"]
+        ["competitor_id","product_id","price_sell"]
     )
 
     upload_csv(
