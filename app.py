@@ -1,3 +1,6 @@
+import sys, os
+sys.path.append(os.path.dirname(__file__))
+
 import streamlit as st
 from ui.upload_data import render_upload_data
 from ui.war_room import render_war_room
