@@ -26,7 +26,7 @@ def _safe_float(x):
 def simulate_price_moves(war, drop_pcts=(0.005, 0.01, 0.02)):
     out = war.copy()
     for p in drop_pcts:
-        k = int(p * 1000)  # 0.5% -> 5
+        k = int(p * 1000)
         out[f"sim_price_{k}"] = out["price_sell"] * (1 - p)
         out[f"sim_ok_{k}"] = out[f"sim_price_{k}"] >= out["floor_price"]
     return out
@@ -98,7 +98,7 @@ def render_war_room():
     )
 
     # ======================
-    # PROMO SIMULATOR (ANTI PRICE WAR)
+    # PROMO SIMULATOR
     # ======================
     promo_rows = []
 
@@ -144,6 +144,26 @@ def render_war_room():
     st.divider()
 
     # ======================
+    # PROMO QUICK VIEW
+    # ======================
+    st.subheader("🎁 Promo Simulator – Quick View")
+
+    promo_view_cols = [
+        "product_name",
+        "promo_best",
+        "promo_war_risk",
+        "promo_margin_pct",
+        "promo_effective_price",
+    ]
+
+    promo_view = war[promo_view_cols].copy()
+    promo_view["promo_effective_price"] = promo_view["promo_effective_price"].apply(
+        lambda x: format_idr(x) if x else "-"
+    )
+
+    st.dataframe(promo_view, use_container_width=True, hide_index=True)
+
+    # ======================
     # DISPLAY
     # ======================
     view = war.sort_values("priority_score", ascending=False).copy()
@@ -151,7 +171,6 @@ def render_war_room():
     for col in [
         "price_sell", "min_comp_price", "gap_price", "floor_price",
         "sim_price_5", "sim_price_10", "sim_price_20",
-        "promo_effective_price"
     ]:
         if col in view.columns:
             view[col] = view[col].apply(format_idr)
@@ -189,37 +208,33 @@ def render_war_room():
     st.subheader("🚨 Action Board (Top 5)")
 
     top = view.head(5)
-    if top.empty:
-        st.success("✅ Tidak ada prioritas kritikal.")
-    else:
-        for _, r in top.iterrows():
-            st.info(
-                f"**{r.get('product_name')} ({r.get('product_id')})**  \n"
-                f"Intent: **{r.get('competitor_intent')}** | DCZ: **{r.get('compete_decision')}** | Impact: **{r.get('impact_level')}**  \n\n"
-                f"➡️ **Counter-Move**: **{r.get('counter_move')}**  \n"
-                f"🎁 **Promo Alternatif**: **{r.get('promo_best','-')}** (Risk: {r.get('promo_war_risk','-')})  \n"
-                f"📍 Channel: **{r.get('counter_channel')}** | ⏱️ **{r.get('counter_duration_days')} hari**"
-            )
+    for _, r in top.iterrows():
+        st.info(
+            f"**{r.get('product_name')} ({r.get('product_id')})**  \n"
+            f"Intent: **{r.get('competitor_intent')}** | DCZ: **{r.get('compete_decision')}** | Impact: **{r.get('impact_level')}**  \n\n"
+            f"➡️ **Counter-Move**: **{r.get('counter_move')}**  \n"
+            f"🎁 **Promo Alternatif**: **{r.get('promo_best','-')}** (Risk: {r.get('promo_war_risk','-')})  \n"
+            f"📍 Channel: **{r.get('counter_channel')}** | ⏱️ **{r.get('counter_duration_days')} hari**"
+        )
 
     # ======================
-    # DETAIL DRILL DOWN
+    # DETAIL
     # ======================
     st.subheader("🔍 Detail per Produk")
 
     for _, r in view.iterrows():
         with st.expander(f"{r['product_name']} ({r['product_id']})"):
             st.markdown(f"""
-**Harga Saat Ini**: {r.get('price_sell','-')}  
-**Harga Kompetitor**: {r.get('min_comp_price','-')}  
-**Gap Harga**: {r.get('gap_price','-')}  
+**Harga**: {r.get('price_sell','-')}  
+**Kompetitor**: {r.get('min_comp_price','-')}  
+**Gap**: {r.get('gap_price','-')}  
 
-**Intent Kompetitor**: **{r.get('competitor_intent','-')}**  
-**DCZ Decision**: **{r.get('compete_decision','-')}**  
-**Counter-Move**: **{r.get('counter_move','-')}**  
-Channel: {r.get('counter_channel','-')} | Durasi: {r.get('counter_duration_days','-')} hari  
+**Intent**: **{r.get('competitor_intent','-')}**  
+**DCZ**: **{r.get('compete_decision','-')}**  
+**Counter-Move**: **{r.get('counter_move','-')}**
 """)
 
-            st.markdown("**Promo Simulator (Anti Price War)**")
+            st.markdown("**Promo Simulator**")
             st.write({
                 "Promo": r.get("promo_best"),
                 "Effective Price": format_idr(r.get("promo_effective_price")) if r.get("promo_effective_price") else "-",
@@ -228,13 +243,4 @@ Channel: {r.get('counter_channel','-')} | Durasi: {r.get('counter_duration_days'
             })
             st.caption(r.get("promo_rationale", ""))
 
-            st.markdown("**Simulasi Penurunan Harga**")
-            st.write({
-                "Turun 0.5%": f"{r.get('sim_price_5')} ({r.get('sim_ok_5')})",
-                "Turun 1%": f"{r.get('sim_price_10')} ({r.get('sim_ok_10')})",
-                "Turun 2%": f"{r.get('sim_price_20')} ({r.get('sim_ok_20')})",
-            })
-
-    st.caption("War Room ini menghasilkan keputusan yang bisa dieksekusi — bukan sekadar analisa.")
-
-
+    st.caption("War Room = decision engine. Promo = senjata, bukan diskon panik.")
