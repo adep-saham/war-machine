@@ -1,4 +1,7 @@
 import streamlit as st
+import engines.pricing_engine as pe
+import streamlit as st
+st.write("pricing_engine functions:", dir(pe))
 
 from loaders.data_loader import safe_read_csv
 from engines.pricing_engine import build_pricing_snapshot
