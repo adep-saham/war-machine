@@ -1,9 +1,31 @@
 # ============================================================
 # engines/pricing_engine.py
-# Pricing Snapshot Engine (FINAL – cost_unit FIXED)
+# Pricing Snapshot Engine (FINAL v2 – AUTO COMP PRICE)
 # ============================================================
 
 import pandas as pd
+
+
+def _detect_comp_price_col(df: pd.DataFrame) -> str:
+    """
+    Auto-detect competitor price column.
+    Priority order from most common to generic.
+    """
+    candidates = [
+        "price_competitor",
+        "comp_price",
+        "price",
+        "price_sell",
+        "harga",
+        "harga_jual",
+        "price_comp",
+    ]
+    for c in candidates:
+        if c in df.columns:
+            return c
+    raise ValueError(
+        f"price_competitor CSV must have ONE of these columns: {candidates}"
+    )
 
 
 def build_pricing_snapshot(
@@ -13,14 +35,13 @@ def build_pricing_snapshot(
 ) -> pd.DataFrame:
     """
     Build pricing snapshot that becomes the BASE of War Room.
-    WAJIB membawa atribut produk inti:
-    - product_name
-    - pecahan_gram
-    - cost_unit   <-- FIX UTAMA
+    FINAL CONTRACT:
+    - cost_unit WAJIB ada
+    - competitor price AUTO-detect
     """
 
     # -----------------------------
-    # VALIDATION (FAIL FAST)
+    # VALIDATION — MASTER
     # -----------------------------
     required_master_cols = {
         "product_id",
@@ -32,39 +53,37 @@ def build_pricing_snapshot(
     if missing_master:
         raise ValueError(f"Master Product missing columns: {missing_master}")
 
-    required_price_cols = {"product_id", "price_sell"}
-    missing_price = required_price_cols - set(price_company.columns)
-    if missing_price:
-        raise ValueError(f"Price Company missing columns: {missing_price}")
+    # -----------------------------
+    # VALIDATION — COMPANY PRICE
+    # -----------------------------
+    if not {"product_id", "price_sell"}.issubset(price_company.columns):
+        raise ValueError("price_company must have columns: product_id, price_sell")
 
     # -----------------------------
-    # BASE SNAPSHOT (COMPANY PRICE + MASTER)
+    # BASE SNAPSHOT
     # -----------------------------
     snap = price_company.merge(
         master_product[
-            [
-                "product_id",
-                "product_name",
-                "pecahan_gram",
-                "cost_unit",   # ✅ FIX: cost_unit ikut dari awal
-            ]
+            ["product_id", "product_name", "pecahan_gram", "cost_unit"]
         ],
         on="product_id",
         how="left"
     )
 
     # -----------------------------
-    # COMPETITOR PRICE (MIN)
+    # COMPETITOR PRICE (AUTO)
     # -----------------------------
     if price_competitor is not None and not price_competitor.empty:
-        if not {"product_id", "price_competitor"}.issubset(price_competitor.columns):
-            raise ValueError("price_competitor must have columns: product_id, price_competitor")
+        if "product_id" not in price_competitor.columns:
+            raise ValueError("price_competitor must have column: product_id")
+
+        comp_price_col = _detect_comp_price_col(price_competitor)
 
         comp_min = (
             price_competitor
-            .groupby("product_id", as_index=False)["price_competitor"]
+            .groupby("product_id", as_index=False)[comp_price_col]
             .min()
-            .rename(columns={"price_competitor": "min_comp_price"})
+            .rename(columns={comp_price_col: "min_comp_price"})
         )
 
         snap = snap.merge(comp_min, on="product_id", how="left")
@@ -75,8 +94,6 @@ def build_pricing_snapshot(
     # PRICE GAP & FLOOR
     # -----------------------------
     snap["gap_price"] = snap["price_sell"] - snap["min_comp_price"]
-
-    # Floor price = cost + safety margin (example 2%)
     snap["floor_price"] = snap["cost_unit"] * 1.02
 
     # -----------------------------
@@ -91,6 +108,6 @@ def build_pricing_snapshot(
     ]
     for c in critical_cols:
         if c not in snap.columns:
-            raise RuntimeError(f"CRITICAL COLUMN MISSING AFTER SNAPSHOT: {c}")
+            raise RuntimeError(f"CRITICAL COLUMN MISSING: {c}")
 
     return snap
