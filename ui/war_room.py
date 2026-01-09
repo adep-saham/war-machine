@@ -9,6 +9,8 @@ from engines.intent_engine import detect_loss_intent
 from engines.dcz_engine import apply_dont_compete_zone
 from engines.counter_move_engine import generate_counter_moves
 from utils.formatters import format_idr
+from engines.demand_forecast_engine import attach_demand_signals, ForecastConfig
+
 
 # Promo Simulator (interactive what-if)
 # Pastikan file ini ada sesuai modul yang sudah dibuat sebelumnya:
@@ -113,7 +115,10 @@ def render_war_room():
         war = build_pricing_snapshot(price_company, master, price_comp)
         war = apply_guardrail(war)
         war = apply_market_share(war, sales, market)
+        cfg = ForecastConfig(date_col="date", sku_col="product_id", qty_col="qty")
+        war = attach_demand_signals(war, sales, cfg=cfg, inventory_col="stock_on_hand")
 
+        
         # normalize numeric
         for c in ["price_sell", "min_comp_price", "gap_price", "floor_price"]:
             if c in war.columns:
