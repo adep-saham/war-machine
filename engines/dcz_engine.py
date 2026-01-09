@@ -1,62 +1,33 @@
 import pandas as pd
 
 
-def apply_dont_compete_zone(war: pd.DataFrame) -> pd.DataFrame:
+class DCZEngine:
     """
-    Don't Compete Zone (DCZ)
-    Menentukan keputusan strategis:
-      - FIGHT  : wajib dilawan
-      - HOLD   : pantau, jangan agresif
-      - LET_GO : sengaja tidak dilawan (DCZ)
-
-    Output kolom:
-      - compete_decision
-      - dcz_reason
+    HARDENED DCZ ENGINE
+    - Tidak asumsi kolom ada
+    - Tidak pernah throw AttributeError
+    - Selalu return war dataframe
     """
 
-    out = war.copy()
+    def decide_dcz(self, war: pd.DataFrame) -> pd.DataFrame:
+        df = war.copy()
 
-    decisions = []
-    reasons = []
+        # === FORCE COLUMN NORMALIZATION ===
+        df.columns = df.columns.astype(str)
 
-    for _, r in out.iterrows():
-        status = r.get("status")
-        impact = r.get("impact_level")
-        intent = r.get("competitor_intent")
-        share = r.get("market_share_pct")
-        blocked = r.get("guardrail_status") == "BLOCKED"
+        # === DEFAULT DCZ ===
+        df["dcz_decision"] = "HOLD"
+        df["dcz_reason"] = "default_safe_mode"
 
-        decision = "HOLD"
-        reason = "Pantau kondisi, tidak perlu aksi agresif."
+        # === SAFE RULES (OPTIONAL, TIDAK WAJIB ADA KOLOM) ===
+        if "demand_trend" in df.columns:
+            df.loc[df["demand_trend"] == "UP", "dcz_decision"] = "FIGHT"
+            df.loc[df["demand_trend"] == "DOWN", "dcz_decision"] = "PROMO_ZONE"
 
-        # 1️⃣ BAIT / SIGNAL → JANGAN TERPANCING
-        if intent == "BAIT / SIGNAL":
-            decision = "LET_GO"
-            reason = "Harga kompetitor terindikasi pancingan (bait)."
+        if "guardrail_status" in df.columns:
+            df.loc[df["guardrail_status"] == "BLOCKED", "dcz_decision"] = "NO_FIGHT"
 
-        # 2️⃣ Impact LOW + share kecil → KORBANKAN
-        elif impact == "LOW" and share is not None and share < 5:
-            decision = "LET_GO"
-            reason = "Impact rendah dan market share kecil (korban strategis)."
+        if "inventory_cover_days" in df.columns:
+            df.loc[df["inventory_cover_days"] > 60, "dcz_decision"] = "LET_GO"
 
-        # 3️⃣ BLOCKED + impact tidak tinggi → JANGAN DIPAKSA
-        elif blocked and impact in ["LOW", "MED"]:
-            decision = "HOLD"
-            reason = "Harga terblokir guardrail, impact tidak kritikal."
-
-        # 4️⃣ Impact HIGH → WAJIB FIGHT
-        elif impact == "HIGH":
-            decision = "FIGHT"
-            reason = "Impact tinggi terhadap market share."
-
-        # 5️⃣ MARKET GRAB → LAWAN
-        elif intent == "MARKET_GRAB":
-            decision = "FIGHT"
-            reason = "Kompetitor agresif ambil market (market grab)."
-
-        decisions.append(decision)
-        reasons.append(reason)
-
-    out["compete_decision"] = decisions
-    out["dcz_reason"] = reasons
-    return out
+        return df
