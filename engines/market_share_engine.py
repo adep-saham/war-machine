@@ -1,42 +1,88 @@
-def apply_market_share(war, sales, market):
-    war["market_share_pct"] = None
-    war["share_at_risk_pct"] = None
-    war["impact_level"] = "NO DATA"
+# ============================================================
+# engines/market_share_engine.py
+# Robust version (anti KeyError)
+# ============================================================
 
-    if sales is None or market is None:
+import pandas as pd
+
+
+def apply_market_share(war: pd.DataFrame, sales: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
+    """
+    Attach market share & impact signals.
+    Robust against missing optional columns:
+    - status
+    - guardrail_status
+    """
+
+    if war is None or war.empty:
         return war
 
-    last_date = sales["date"].max()
+    df = war.copy()
 
-    sales_latest = (
-        sales[sales["date"] == last_date]
-        .groupby("product_id")["volume_gram"]
-        .sum()
+    # =========================
+    # SAFETY DEFAULTS (FIX UTAMA)
+    # =========================
+    if "status" not in df.columns:
+        df["status"] = "NORMAL"
+
+    if "guardrail_status" not in df.columns:
+        df["guardrail_status"] = "OK"
+
+    # =========================
+    # BASIC SALES AGG
+    # =========================
+    if sales is not None and not sales.empty:
+        vol = (
+            sales.groupby("product_id", as_index=False)["sales_volume"]
+            .sum()
+            .rename(columns={"sales_volume": "company_volume"})
+        )
+        df = df.merge(vol, on="product_id", how="left")
+    else:
+        df["company_volume"] = 0
+
+    df["company_volume"] = df["company_volume"].fillna(0)
+
+    # =========================
+    # MARKET SIZE
+    # =========================
+    if market is not None and not market.empty:
+        # Ambil latest market size per produk
+        market_latest = (
+            market.sort_values("date")
+            .groupby("product_id", as_index=False)
+            .last()[["product_id", "estimated_market_volume"]]
+        )
+
+        df = df.merge(market_latest, on="product_id", how="left")
+    else:
+        df["estimated_market_volume"] = 0
+
+    df["estimated_market_volume"] = df["estimated_market_volume"].fillna(0)
+
+    # =========================
+    # SHARE & RISK
+    # =========================
+    df["market_share_pct"] = df.apply(
+        lambda r: r["company_volume"] / r["estimated_market_volume"]
+        if r["estimated_market_volume"] > 0 else 0,
+        axis=1
     )
 
-    market_latest = (
-        market[market["date"] == last_date]
-        .groupby("product_id")["estimated_market_volume"]
-        .sum()
+    df["share_at_risk_pct"] = df["market_share_pct"].apply(
+        lambda x: min(x * 1.5, 1.0)
     )
 
-    for i, r in war.iterrows():
-        pid = r["product_id"]
-        if pid in sales_latest and pid in market_latest:
-            share = sales_latest[pid] / market_latest[pid] * 100
-            war.at[i, "market_share_pct"] = round(share, 2)
+    # =========================
+    # IMPACT LEVEL
+    # =========================
+    def impact_level(r):
+        if r["share_at_risk_pct"] > 0.2:
+            return "HIGH"
+        if r["share_at_risk_pct"] > 0.1:
+            return "MED"
+        return "LOW"
 
-            if r["status"] == "ATTACK" and r["guardrail_status"] == "BLOCKED":
-                risk = share * 0.5
-            elif r["status"] == "ATTACK":
-                risk = share * 0.2
-            else:
-                risk = share * 0.05
+    df["impact_level"] = df.apply(impact_level, axis=1)
 
-            war.at[i, "share_at_risk_pct"] = round(risk, 2)
-
-            war.at[i, "impact_level"] = (
-                "HIGH" if risk > 5 else "MED" if risk > 2 else "LOW"
-            )
-
-    return war
+    return df
