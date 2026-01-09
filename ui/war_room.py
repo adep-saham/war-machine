@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # ===============================
-# Helper: DCZ Badge (emoji)
+# Helper: DCZ Badge
 # ===============================
 def dcz_badge(dcz: str) -> str:
     return {
@@ -15,31 +15,39 @@ def dcz_badge(dcz: str) -> str:
 
 
 # ===============================
-# MAIN RENDER
+# MAIN UI
 # ===============================
-def render_war_room(
-    master_product: pd.DataFrame,
-    price_company: pd.DataFrame,
-    price_competitor: pd.DataFrame,
-    sales_internal: pd.DataFrame,
-    market_size: pd.DataFrame,
-    engines: dict,
-):
-    """
-    engines dict expected keys:
-    - pricing_engine.build_pricing_snapshot
-    - guardrail_engine.apply_guardrail
-    - product_performance_engine.compute_product_performance
-    - market_share_engine.apply_market_share
-    - dcz_engine.decide_dcz
-    - counter_move_engine.generate_counter_move
-    """
+def render_war_room():
 
     st.markdown("## ⚔️ War Room — Command Center")
     st.caption("Demand + Product Role → DCZ → Counter-Move (Single Source of Truth)")
 
     # ===============================
-    # 1. PIPELINE
+    # 0. Ambil data dari session_state
+    # ===============================
+    required_keys = [
+        "master_product",
+        "price_company",
+        "price_competitor",
+        "sales_internal",
+        "market_size",
+        "engines"
+    ]
+
+    missing = [k for k in required_keys if k not in st.session_state]
+    if missing:
+        st.warning(f"⚠️ Data belum lengkap: {missing}")
+        st.stop()
+
+    master_product   = st.session_state["master_product"]
+    price_company    = st.session_state["price_company"]
+    price_competitor = st.session_state["price_competitor"]
+    sales_internal   = st.session_state["sales_internal"]
+    market_size      = st.session_state["market_size"]
+    engines          = st.session_state["engines"]
+
+    # ===============================
+    # 1. PIPELINE ANALISIS
     # ===============================
     war = engines["pricing_engine"].build_pricing_snapshot(
         price_company=price_company,
@@ -48,6 +56,7 @@ def render_war_room(
     )
 
     war = engines["guardrail_engine"].apply_guardrail(war)
+
     war = engines["product_performance_engine"].compute_product_performance(
         war, sales_internal
     )
@@ -61,7 +70,7 @@ def render_war_room(
     war = engines["counter_move_engine"].generate_counter_move(war)
 
     # ===============================
-    # 2. SAFETY DEFAULTS (ANTI CRASH)
+    # 2. SAFETY DEFAULTS
     # ===============================
     defaults = {
         "product_role": "UNKNOWN",
@@ -75,12 +84,13 @@ def render_war_room(
         "market_share_pct": 0.0,
         "share_at_risk_pct": 0.0,
     }
-    for c, v in defaults.items():
-        if c not in war.columns:
-            war[c] = v
+
+    for col, val in defaults.items():
+        if col not in war.columns:
+            war[col] = val
 
     # ===============================
-    # 3. PRIORITY SCORE (FOR SORTING)
+    # 3. PRIORITY & SORTING
     # ===============================
     priority_map = {
         "FIGHT": 4,
@@ -91,24 +101,21 @@ def render_war_room(
     }
     war["priority_score"] = war["dcz_decision"].map(priority_map).fillna(1)
 
-    # ===============================
-    # 4. FINAL VIEW
-    # ===============================
     view = war.sort_values("priority_score", ascending=False).copy()
 
     # ===============================
-    # 5. VIEW MODE TOGGLE
+    # 4. VIEW MODE TOGGLE
     # ===============================
     st.markdown("### 🧭 View Mode")
     view_mode = st.radio(
         "Pilih mode tampilan:",
         ["Executive View (Manajemen)", "Analyst View (Detail)"],
-        horizontal=True,
+        horizontal=True
     )
 
-    # ==========================================================
-    # EXECUTIVE VIEW (POWER BI–LIKE)
-    # ==========================================================
+    # ==================================================
+    # EXECUTIVE VIEW
+    # ==================================================
     if view_mode == "Executive View (Manajemen)":
 
         st.markdown("## 📊 Ringkasan Eksekutif")
@@ -120,7 +127,7 @@ def render_war_room(
         c4.metric("🟡 HOLD", (view["dcz_decision"] == "HOLD").sum())
         c5.metric("📦 PRODUK", len(view))
 
-        st.markdown("### 🚨 Action Board (Apa yang perlu dilakukan hari ini?)")
+        st.markdown("### 🚨 Action Board")
 
         for _, r in view.iterrows():
             bg = {
@@ -138,7 +145,6 @@ def render_war_room(
                     padding:14px;
                     border-radius:10px;
                     margin-bottom:10px;
-                    border-left:8px solid #999;
                 ">
                 <b>{dcz_badge(r['dcz_decision'])} — {r['product_id']}</b><br>
                 Role: <b>{r['product_role']}</b> |
@@ -150,12 +156,11 @@ def render_war_room(
                 unsafe_allow_html=True,
             )
 
-    # ==========================================================
-    # ANALYST VIEW (DETAIL TABLE)
-    # ==========================================================
-    if view_mode == "Analyst View (Detail)":
-
-        st.markdown("## 🔍 Analyst View — Detail Lengkap")
+    # ==================================================
+    # ANALYST VIEW
+    # ==================================================
+    else:
+        st.markdown("## 🔍 Analyst View — Detail")
 
         def dcz_color(val):
             return {
@@ -166,36 +171,15 @@ def render_war_room(
                 "LET_GO": "background-color:#e6e6e6;font-weight:bold",
             }.get(val, "")
 
-        def demand_icon(val):
-            return {"UP": "⬆️ UP", "DOWN": "⬇️ DOWN", "FLAT": "➡️ FLAT"}.get(val, val)
-
-        show_cols = [
-            "product_id",
-            "product_role",
-            "dcz_decision",
-            "demand_trend",
-            "forecast_confidence",
-            "impact_level",
-            "market_share_pct",
-            "share_at_risk_pct",
-            "counter_move",
-            "counter_channel",
-            "counter_duration_days",
-        ]
-
-        df_show = view.copy()
-        df_show["demand_trend"] = df_show["demand_trend"].map(demand_icon)
-
         styled = (
-            df_show[show_cols]
-            .style.applymap(dcz_color, subset=["dcz_decision"])
-            .format(
-                {
-                    "forecast_confidence": "{:.0%}",
-                    "market_share_pct": "{:.1%}",
-                    "share_at_risk_pct": "{:.1%}",
-                }
-            )
+            view
+            .style
+            .applymap(dcz_color, subset=["dcz_decision"])
+            .format({
+                "forecast_confidence": "{:.0%}",
+                "market_share_pct": "{:.1%}",
+                "share_at_risk_pct": "{:.1%}",
+            })
         )
 
         st.dataframe(styled, use_container_width=True)
