@@ -152,14 +152,18 @@ def render_war_room():
         war["share_at_risk_pct"] = war.get("share_at_risk_pct", 0.0)
         war["impact_level"] = war.get("impact_level", "LOW")
 
-    # DCZ decision (INI YANG KRUSIAL)
+    # =================================================
+    # DCZ DECISION — HARD OVERRIDE (ANTI REGISTRY ERROR)
+    # =================================================
+    from engines.dcz_engine import DCZEngine
+    
     try:
-        dcz = engines.get("dcz_engine")
-        war = call_engine(dcz, "decide_dcz", war)
+        war = DCZEngine().decide_dcz(war)
     except Exception as e:
         st.warning(f"DCZ engine gagal (fallback HOLD): {e}")
         war["dcz_decision"] = "HOLD"
-        war["dcz_reason"] = "dcz_engine_not_loaded"
+        war["dcz_reason"] = "hard_override_fallback"
+
 
     # Counter move
     try:
