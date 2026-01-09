@@ -10,6 +10,7 @@ from engines.dcz_engine import apply_dont_compete_zone
 from engines.counter_move_engine import generate_counter_moves
 from utils.formatters import format_idr
 from engines.demand_forecast_engine import attach_demand_signals, ForecastConfig
+from engines.product_performance_engine import compute_product_performance
 
 
 # Promo Simulator (interactive what-if)
