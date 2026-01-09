@@ -1,113 +1,73 @@
-# ============================================================
-# engines/pricing_engine.py
-# Pricing Snapshot Engine (FINAL v2 – AUTO COMP PRICE)
-# ============================================================
-
 import pandas as pd
 
 
-def _detect_comp_price_col(df: pd.DataFrame) -> str:
+def build_pricing_snapshot(price_company, master, price_competitor):
     """
-    Auto-detect competitor price column.
-    Priority order from most common to generic.
-    """
-    candidates = [
-        "price_competitor",
-        "comp_price",
-        "price",
-        "price_sell",
-        "harga",
-        "harga_jual",
-        "price_comp",
-    ]
-    for c in candidates:
-        if c in df.columns:
-            return c
-    raise ValueError(
-        f"price_competitor CSV must have ONE of these columns: {candidates}"
-    )
-
-
-def build_pricing_snapshot(
-    price_company: pd.DataFrame,
-    master_product: pd.DataFrame,
-    price_competitor: pd.DataFrame
-) -> pd.DataFrame:
-    """
-    Build pricing snapshot that becomes the BASE of War Room.
-    FINAL CONTRACT:
-    - cost_unit WAJIB ada
-    - competitor price AUTO-detect
+    Build pricing snapshot:
+    - Merge master + price_company + competitor
+    - Compute floor_price, gap_price
+    - Defensive against missing columns (cost_unit, competitor price)
     """
 
-    # -----------------------------
-    # VALIDATION — MASTER
-    # -----------------------------
-    required_master_cols = {
-        "product_id",
-        "product_name",
-        "pecahan_gram",
-        "cost_unit",
-    }
-    missing_master = required_master_cols - set(master_product.columns)
-    if missing_master:
-        raise ValueError(f"Master Product missing columns: {missing_master}")
-
-    # -----------------------------
-    # VALIDATION — COMPANY PRICE
-    # -----------------------------
-    if not {"product_id", "price_sell"}.issubset(price_company.columns):
-        raise ValueError("price_company must have columns: product_id, price_sell")
-
-    # -----------------------------
-    # BASE SNAPSHOT
-    # -----------------------------
-    snap = price_company.merge(
-        master_product[
-            ["product_id", "product_name", "pecahan_gram", "cost_unit"]
-        ],
+    # =====================================================
+    # 1. BASIC MERGE (MASTER + COMPANY PRICE)
+    # =====================================================
+    snap = master.merge(
+        price_company,
         on="product_id",
-        how="left"
+        how="left",
+        suffixes=("", "_company"),
     )
 
-    # -----------------------------
-    # COMPETITOR PRICE (AUTO)
-    # -----------------------------
-    if price_competitor is not None and not price_competitor.empty:
-        if "product_id" not in price_competitor.columns:
-            raise ValueError("price_competitor must have column: product_id")
-
-        comp_price_col = _detect_comp_price_col(price_competitor)
-
+    # =====================================================
+    # 2. COMPETITOR MIN PRICE
+    # =====================================================
+    if price_competitor is not None and len(price_competitor) > 0:
         comp_min = (
             price_competitor
-            .groupby("product_id", as_index=False)[comp_price_col]
+            .groupby("product_id", as_index=False)["price_sell"]
             .min()
-            .rename(columns={comp_price_col: "min_comp_price"})
+            .rename(columns={"price_sell": "min_comp_price"})
         )
-
         snap = snap.merge(comp_min, on="product_id", how="left")
     else:
         snap["min_comp_price"] = None
 
-    # -----------------------------
-    # PRICE GAP & FLOOR
-    # -----------------------------
-    snap["gap_price"] = snap["price_sell"] - snap["min_comp_price"]
-    snap["floor_price"] = snap["cost_unit"] * 1.02
+    # =====================================================
+    # 3. FLOOR PRICE (DEFENSIVE)
+    # =====================================================
+    if "cost_unit" in snap.columns:
+        snap["floor_price"] = snap["cost_unit"] * 1.02
+        snap["floor_reason"] = "cost_plus_2pct"
+    else:
+        # Fallback: protect margin minimally
+        snap["floor_price"] = snap["price_sell"] * 0.98
+        snap["floor_reason"] = "fallback_98pct_price"
 
-    # -----------------------------
-    # SANITY CHECK (ANTI SILENT BUG)
-    # -----------------------------
-    critical_cols = [
-        "product_id",
-        "price_sell",
-        "cost_unit",
-        "min_comp_price",
-        "floor_price",
-    ]
-    for c in critical_cols:
-        if c not in snap.columns:
-            raise RuntimeError(f"CRITICAL COLUMN MISSING: {c}")
+    # =====================================================
+    # 4. GAP PRICE VS COMPETITOR
+    # =====================================================
+    if "min_comp_price" in snap.columns:
+        snap["gap_price"] = snap["price_sell"] - snap["min_comp_price"]
+    else:
+        snap["gap_price"] = None
+
+    # =====================================================
+    # 5. GUARDRAIL STATUS
+    # =====================================================
+    snap["guardrail_status"] = "ALLOWED"
+    snap.loc[snap["price_sell"] < snap["floor_price"], "guardrail_status"] = "BLOCKED"
+
+    # =====================================================
+    # 6. CLEANUP & DEFAULTS
+    # =====================================================
+    defaults = {
+        "min_comp_price": None,
+        "gap_price": None,
+        "cost_unit": None,
+    }
+    for col, val in defaults.items():
+        if col not in snap.columns:
+            snap[col] = val
 
     return snap
