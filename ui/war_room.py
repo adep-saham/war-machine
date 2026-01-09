@@ -11,6 +11,7 @@ from engines.counter_move_engine import generate_counter_moves
 from utils.formatters import format_idr
 from engines.demand_forecast_engine import attach_demand_signals, ForecastConfig
 from engines.product_performance_engine import compute_product_performance
+from engines.dcz_decision_engine import decide_dcz
 
 
 # Promo Simulator (interactive what-if)
@@ -140,6 +141,12 @@ def render_war_room():
         min_comp_col="min_comp_price"
         )
 
+        war[["dcz_decision", "dcz_reason"]] = war.apply(
+            lambda r: decide_dcz(r),
+            axis=1,
+            result_type="expand"
+        )
+        
         # ======================
         # COUNTER MOVE
         # ======================
