@@ -52,23 +52,26 @@ def render_war_room():
         st.stop()
 
     # -------------------------------------------------
-    # 1. PIPELINE ANALYTICS (FUNCTION-BASED ENGINE)
+    # 1. PIPELINE ANALYTICS (FUNCTION-BASED, POSITIONAL)
     # -------------------------------------------------
-    # pricing_engine adalah MODULE → panggil function
+    # pricing_engine adalah MODULE → panggil fungsi POSISIONAL
     war = engines["pricing_engine"].build_pricing_snapshot(
-        price_company=price_company,
-        master=master_product,
-        price_competitor=price_competitor,
+        price_company,
+        master_product,
+        price_competitor,
     )
 
     war = engines["guardrail_engine"].apply_guardrail(war)
 
     war = engines["product_performance_engine"].compute_product_performance(
-        war, sales_internal
+        war,
+        sales_internal,
     )
 
     war = engines["market_share_engine"].apply_market_share(
-        war, sales_internal, market_size
+        war,
+        sales_internal,
+        market_size,
     )
 
     war = engines["dcz_engine"].decide_dcz(war)
@@ -76,7 +79,7 @@ def render_war_room():
     war = engines["counter_move_engine"].generate_counter_move(war)
 
     # -------------------------------------------------
-    # 2. SAFETY DEFAULT
+    # 2. SAFETY DEFAULT (ANTI MISSING COLUMN)
     # -------------------------------------------------
     defaults = {
         "product_role": "UNKNOWN",
@@ -96,7 +99,7 @@ def render_war_room():
             war[col] = val
 
     # -------------------------------------------------
-    # 3. PRIORITY
+    # 3. PRIORITY SCORE
     # -------------------------------------------------
     priority_map = {
         "FIGHT": 4,
@@ -127,7 +130,7 @@ def render_war_room():
         st.markdown("## 📊 Ringkasan Eksekutif")
 
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("🔴 FIGHT’s", (view["dcz_decision"] == "FIGHT").sum())
+        c1.metric("🔴 FIGHT", (view["dcz_decision"] == "FIGHT").sum())
         c2.metric("🟠 PROMO", (view["dcz_decision"] == "PROMO_ZONE").sum())
         c3.metric("🟢 NO FIGHT", (view["dcz_decision"] == "NO_FIGHT").sum())
         c4.metric("🟡 HOLD", (view["dcz_decision"] == "HOLD").sum())
@@ -147,7 +150,8 @@ def render_war_room():
                 <b>{dcz_badge(r['dcz_decision'])} — {r['product_id']}</b><br>
                 Role: <b>{r['product_role']}</b> |
                 Demand: <b>{r['demand_trend']}</b><br>
-                Counter-Move: <b>{r['counter_move']}</b>
+                Counter-Move: <b>{r['counter_move']}</b><br>
+                Channel: {r['counter_channel']} | Durasi: {r['counter_duration_days']} hari
                 </div>
                 """,
                 unsafe_allow_html=True,
