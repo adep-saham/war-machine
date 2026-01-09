@@ -1,181 +1,203 @@
 import streamlit as st
 import pandas as pd
 
-# ======================
-# CORE IMPORTS
-# ======================
-from loaders.data_loader import safe_read_csv
-from engines.pricing_engine import build_pricing_snapshot
-from engines.guardrail_engine import apply_guardrail
-from engines.market_share_engine import apply_market_share
-from engines.intent_engine import detect_loss_intent
-from engines.counter_move_engine import generate_counter_moves
-
-# FASE 1 ENGINES
-from engines.demand_forecast_engine import attach_demand_signals, ForecastConfig
-from engines.product_performance_engine import compute_product_performance
-from engines.dcz_decision_engine import decide_dcz
-
-from utils.formatters import format_idr
+# ===============================
+# Helper: DCZ Badge (emoji)
+# ===============================
+def dcz_badge(dcz: str) -> str:
+    return {
+        "FIGHT": "🔴 FIGHT",
+        "PROMO_ZONE": "🟠 PROMO",
+        "NO_FIGHT": "🟢 NO FIGHT",
+        "LET_GO": "⚪ LET GO",
+        "HOLD": "🟡 HOLD"
+    }.get(dcz, "HOLD")
 
 
-# ======================
-# HELPERS
-# ======================
-def _safe_float(x):
-    try:
-        return float(x)
-    except Exception:
-        return None
+# ===============================
+# MAIN RENDER
+# ===============================
+def render_war_room(
+    master_product: pd.DataFrame,
+    price_company: pd.DataFrame,
+    price_competitor: pd.DataFrame,
+    sales_internal: pd.DataFrame,
+    market_size: pd.DataFrame,
+    engines: dict,
+):
+    """
+    engines dict expected keys:
+    - pricing_engine.build_pricing_snapshot
+    - guardrail_engine.apply_guardrail
+    - product_performance_engine.compute_product_performance
+    - market_share_engine.apply_market_share
+    - dcz_engine.decide_dcz
+    - counter_move_engine.generate_counter_move
+    """
 
-
-def priority_score(row):
-    impact_w = {"HIGH": 3, "MED": 2, "LOW": 1}.get(row.get("impact_level"), 0.5)
-    risk = row.get("share_at_risk_pct", 0) or 0
-
-    dcz = row.get("dcz_decision")
-    bonus = 1 if dcz == "FIGHT" else 0
-    penalty = -2 if dcz == "NO_FIGHT" else 0
-
-    return impact_w * (1 + risk) + bonus + penalty
-
-
-# ======================
-# WAR ROOM
-# ======================
-def render_war_room():
-    st.subheader("⚔️ War Room – Command Center")
+    st.markdown("## ⚔️ War Room — Command Center")
     st.caption("Demand + Product Role → DCZ → Counter-Move (Single Source of Truth)")
 
-    # ======================
-    # LOAD DATA
-    # ======================
-    master = safe_read_csv("master_product.csv")
-    price_company = safe_read_csv("price_company.csv")
-    price_comp = safe_read_csv("price_competitor.csv")
-    sales = safe_read_csv("sales_internal.csv")
-    market = safe_read_csv("market_size.csv")
-
-    if master is None or price_company is None or price_comp is None:
-        st.warning("⚠️ Upload: master_product.csv, price_company.csv, price_competitor.csv")
-        return
-
-    # ======================
-    # CONTROLS
-    # ======================
-    with st.expander("⚙️ Pengaturan Counter-Move", expanded=False):
-        max_disc = st.slider("Batas diskon ladder (%)", 0.0, 5.0, 0.5, 0.5) / 100
-        base_days = st.slider("Durasi default (hari)", 1, 14, 3)
-        extreme_gap = st.number_input("Extreme gap (Rp) untuk deteksi BAIT", value=500_000, step=50_000)
-
-    # ======================
-    # PIPELINE
-    # ======================
-    war = build_pricing_snapshot(price_company, master, price_comp)
-    war = apply_guardrail(war)
-    war = apply_market_share(war, sales, market)
-
-    cfg = ForecastConfig(date_col="date", sku_col="product_id", qty_col="qty")
-    war = attach_demand_signals(war, sales, cfg=cfg, inventory_col="stock_on_hand")
-
-    war = compute_product_performance(
-        war,
-        price_col="price_sell",
-        cost_col="cost_unit",
-        volume_col="sales_volume",
-        min_comp_col="min_comp_price"
+    # ===============================
+    # 1. PIPELINE
+    # ===============================
+    war = engines["pricing_engine"].build_pricing_snapshot(
+        price_company=price_company,
+        master=master_product,
+        price_competitor=price_competitor,
     )
 
-    war[["dcz_decision", "dcz_reason"]] = war.apply(
-        lambda r: decide_dcz(r), axis=1, result_type="expand"
+    war = engines["guardrail_engine"].apply_guardrail(war)
+    war = engines["product_performance_engine"].compute_product_performance(
+        war, sales_internal
     )
 
-    war["priority_score"] = war.apply(priority_score, axis=1)
-    war = detect_loss_intent(war, extreme_gap=float(extreme_gap))
-
-    war = generate_counter_moves(
-        war,
-        max_discount_pct=max_disc,
-        base_duration_days=base_days
+    war = engines["market_share_engine"].apply_market_share(
+        war, sales_internal, market_size
     )
 
-    # ======================
-    # KPI HEADER
-    # ======================
-    c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.metric("Produk", len(war))
-    c2.metric("FIGHT", (war["dcz_decision"] == "FIGHT").sum())
-    c3.metric("NO_FIGHT", (war["dcz_decision"] == "NO_FIGHT").sum())
-    c4.metric("PROMO_ZONE", (war["dcz_decision"] == "PROMO_ZONE").sum())
-    c5.metric("LET_GO", (war["dcz_decision"] == "LET_GO").sum())
-    c6.metric("HOLD", (war["dcz_decision"] == "HOLD").sum())
+    war = engines["dcz_engine"].decide_dcz(war)
 
-    st.divider()
+    war = engines["counter_move_engine"].generate_counter_move(war)
 
-    # ======================
-    # SORTED VIEW
-    # ======================
+    # ===============================
+    # 2. SAFETY DEFAULTS (ANTI CRASH)
+    # ===============================
+    defaults = {
+        "product_role": "UNKNOWN",
+        "dcz_decision": "HOLD",
+        "demand_trend": "FLAT",
+        "forecast_confidence": 0.0,
+        "counter_move": "HOLD - Monitor (no action)",
+        "counter_channel": "All",
+        "counter_duration_days": 3,
+        "impact_level": "LOW",
+        "market_share_pct": 0.0,
+        "share_at_risk_pct": 0.0,
+    }
+    for c, v in defaults.items():
+        if c not in war.columns:
+            war[c] = v
+
+    # ===============================
+    # 3. PRIORITY SCORE (FOR SORTING)
+    # ===============================
+    priority_map = {
+        "FIGHT": 4,
+        "PROMO_ZONE": 3,
+        "NO_FIGHT": 2,
+        "HOLD": 1,
+        "LET_GO": 0,
+    }
+    war["priority_score"] = war["dcz_decision"].map(priority_map).fillna(1)
+
+    # ===============================
+    # 4. FINAL VIEW
+    # ===============================
     view = war.sort_values("priority_score", ascending=False).copy()
 
-    # ======================
-    # 🔀 VIEW MODE TOGGLE
-    # ======================
+    # ===============================
+    # 5. VIEW MODE TOGGLE
+    # ===============================
     st.markdown("### 🧭 View Mode")
-    mode = st.radio(
+    view_mode = st.radio(
         "Pilih mode tampilan:",
         ["Executive View (Manajemen)", "Analyst View (Detail)"],
-        horizontal=True
+        horizontal=True,
     )
 
-    def safe_name(r):
-        return r.get("product_name") or r.get("product_id")
+    # ==========================================================
+    # EXECUTIVE VIEW (POWER BI–LIKE)
+    # ==========================================================
+    if view_mode == "Executive View (Manajemen)":
 
-    def dcz_badge(dcz):
-        return {
-            "FIGHT": "🔴 FIGHT",
-            "PROMO_ZONE": "🟠 PROMO",
-            "NO_FIGHT": "🟢 NO FIGHT",
-            "LET_GO": "⚪ LET GO",
-            "HOLD": "🟡 HOLD"
-        }.get(dcz, "🟡 HOLD")
+        st.markdown("## 📊 Ringkasan Eksekutif")
 
-    # ======================
-    # EXECUTIVE VIEW
-    # ======================
-    if mode.startswith("Executive"):
-        fight = (view["dcz_decision"] == "FIGHT").sum()
-        promo = (view["dcz_decision"] == "PROMO_ZONE").sum()
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("🔴 FIGHT", (view["dcz_decision"] == "FIGHT").sum())
+        c2.metric("🟠 PROMO", (view["dcz_decision"] == "PROMO_ZONE").sum())
+        c3.metric("🟢 NO FIGHT", (view["dcz_decision"] == "NO_FIGHT").sum())
+        c4.metric("🟡 HOLD", (view["dcz_decision"] == "HOLD").sum())
+        c5.metric("📦 PRODUK", len(view))
 
-        if fight or promo:
-            st.success("✅ STATUS HARI INI: ACTION MODE — ada produk perlu tindakan")
-        else:
-            st.warning("🟡 STATUS HARI INI: MONITORING MODE — tidak ada aksi harga")
+        st.markdown("### 🚨 Action Board (Apa yang perlu dilakukan hari ini?)")
 
-        st.subheader("🚨 Action Board (Top 5)")
-        for _, r in view.head(5).iterrows():
-            st.info(
-                f"**{dcz_badge(r['dcz_decision'])} — {safe_name(r)}**\n\n"
-                f"Role: {r.get('product_role')} | Demand: {r.get('demand_trend')}\n\n"
-                f"➡️ Counter-Move: **{r.get('counter_move')}** "
-                f"(Channel: {r.get('counter_channel')}, {r.get('counter_duration_days')} hari)"
+        for _, r in view.iterrows():
+            bg = {
+                "FIGHT": "#ffe5e5",
+                "PROMO_ZONE": "#fff4e5",
+                "NO_FIGHT": "#e9f7ef",
+                "HOLD": "#f2f2f2",
+                "LET_GO": "#eeeeee",
+            }.get(r["dcz_decision"], "#ffffff")
+
+            st.markdown(
+                f"""
+                <div style="
+                    background:{bg};
+                    padding:14px;
+                    border-radius:10px;
+                    margin-bottom:10px;
+                    border-left:8px solid #999;
+                ">
+                <b>{dcz_badge(r['dcz_decision'])} — {r['product_id']}</b><br>
+                Role: <b>{r['product_role']}</b> |
+                Demand: <b>{r['demand_trend']}</b><br>
+                🧭 Aksi: <b>{r['counter_move']}</b>
+                ({r['counter_channel']}, {r['counter_duration_days']} hari)
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        st.subheader("📎 Ringkasan Keputusan")
-        st.dataframe(
-            view[[
-                "product_id", "product_role", "dcz_decision",
-                "demand_trend", "forecast_confidence",
-                "counter_move", "counter_channel", "counter_duration_days"
-            ]],
-            use_container_width=True,
-            hide_index=True
+    # ==========================================================
+    # ANALYST VIEW (DETAIL TABLE)
+    # ==========================================================
+    if view_mode == "Analyst View (Detail)":
+
+        st.markdown("## 🔍 Analyst View — Detail Lengkap")
+
+        def dcz_color(val):
+            return {
+                "FIGHT": "background-color:#ffdddd;font-weight:bold",
+                "PROMO_ZONE": "background-color:#fff0cc;font-weight:bold",
+                "NO_FIGHT": "background-color:#ddffdd;font-weight:bold",
+                "HOLD": "background-color:#eeeeee;font-weight:bold",
+                "LET_GO": "background-color:#e6e6e6;font-weight:bold",
+            }.get(val, "")
+
+        def demand_icon(val):
+            return {"UP": "⬆️ UP", "DOWN": "⬇️ DOWN", "FLAT": "➡️ FLAT"}.get(val, val)
+
+        show_cols = [
+            "product_id",
+            "product_role",
+            "dcz_decision",
+            "demand_trend",
+            "forecast_confidence",
+            "impact_level",
+            "market_share_pct",
+            "share_at_risk_pct",
+            "counter_move",
+            "counter_channel",
+            "counter_duration_days",
+        ]
+
+        df_show = view.copy()
+        df_show["demand_trend"] = df_show["demand_trend"].map(demand_icon)
+
+        styled = (
+            df_show[show_cols]
+            .style.applymap(dcz_color, subset=["dcz_decision"])
+            .format(
+                {
+                    "forecast_confidence": "{:.0%}",
+                    "market_share_pct": "{:.1%}",
+                    "share_at_risk_pct": "{:.1%}",
+                }
+            )
         )
 
-    # ======================
-    # ANALYST VIEW
-    # ======================
-    else:
-        st.subheader("🧪 Analyst View — Detail Lengkap")
-        st.dataframe(view, use_container_width=True, hide_index=True)
+        st.dataframe(styled, use_container_width=True)
 
     st.caption("War Room FINAL — DCZ tunggal, keputusan konsisten, tidak reaktif.")
