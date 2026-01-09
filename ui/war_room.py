@@ -132,6 +132,13 @@ def render_war_room():
         war = detect_loss_intent(war, extreme_gap=float(extreme_gap))
         war = apply_dont_compete_zone(war)
         war["priority_score"] = war.apply(priority_score, axis=1)
+        war = compute_product_performance(
+        war,
+        price_col="price_sell",
+        cost_col="cost_unit",
+        volume_col="sales_volume",
+        min_comp_col="min_comp_price"
+        )
 
         # ======================
         # COUNTER MOVE
