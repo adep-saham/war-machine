@@ -4,40 +4,37 @@ import pandas as pd
 def compute_product_performance(
     war: pd.DataFrame,
     sales_internal: pd.DataFrame,
-    price_col: str = "price_sell",
-    volume_col: str = "volume",
 ):
     """
-    Compute product performance metrics:
-    - sales_volume
-    - revenue
-    - market_share (if market size available)
-    Defensive against missing columns.
+    Compute product performance metrics.
+    HARDENED VERSION:
+    - Tidak pakai parameter kolom dinamis
+    - Tidak bisa error karena kolom hilang
     """
 
     df = war.copy()
 
     # =====================================================
-    # 1. VALIDASI & NORMALISASI KOLOM INPUT
+    # 1. PASTIKAN KOLOM WAJIB ADA
     # =====================================================
-    if price_col is None or price_col not in df.columns:
-        df["price_sell"] = df.get("price_sell", 0)
-        price_col = "price_sell"
-
-    if volume_col is None:
-        volume_col = "volume"
+    if "price_sell" not in df.columns:
+        df["price_sell"] = 0
 
     # =====================================================
     # 2. AGREGASI SALES INTERNAL
     # =====================================================
     if sales_internal is not None and len(sales_internal) > 0:
+        if "volume" not in sales_internal.columns:
+            sales_internal["volume"] = 0
+
         sales_agg = (
             sales_internal
             .groupby("product_id", as_index=False)
             .agg(
-                sales_volume=(volume_col, "sum"),
+                sales_volume=("volume", "sum"),
             )
         )
+
         df = df.merge(sales_agg, on="product_id", how="left")
     else:
         df["sales_volume"] = 0
@@ -47,10 +44,10 @@ def compute_product_performance(
     # =====================================================
     # 3. HITUNG REVENUE
     # =====================================================
-    df["revenue"] = df["sales_volume"] * df[price_col]
+    df["revenue"] = df["sales_volume"] * df["price_sell"]
 
     # =====================================================
-    # 4. MARKET SHARE (JIKA ADA)
+    # 4. MARKET SHARE (OPSIONAL)
     # =====================================================
     if "estimated_market_volume" in df.columns:
         df["market_share_pct"] = df.apply(
@@ -65,7 +62,7 @@ def compute_product_performance(
         df["market_share_pct"] = 0
 
     # =====================================================
-    # 5. PERFORMANCE FLAG (UNTUK DCZ / UI)
+    # 5. PERFORMANCE FLAG (UNTUK DCZ & UI)
     # =====================================================
     df["performance_flag"] = "NORMAL"
     df.loc[df["sales_volume"] == 0, "performance_flag"] = "NO_SALES"
