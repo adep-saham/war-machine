@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
 
-# ===============================
-# Helper
-# ===============================
+# =====================================================
+# Helper: Load CSV + Validasi Kolom
+# =====================================================
 def load_csv(uploaded_file, required_cols=None):
     df = pd.read_csv(uploaded_file)
     if required_cols:
@@ -14,9 +14,9 @@ def load_csv(uploaded_file, required_cols=None):
     return df
 
 
-# ===============================
+# =====================================================
 # MAIN UPLOAD UI
-# ===============================
+# =====================================================
 def render_upload_data():
 
     st.markdown("## ☁️ Upload Data (Manual)")
@@ -94,33 +94,33 @@ def render_upload_data():
             st.success(f"market_size.csv tersimpan ({len(df)} baris)")
 
     # -------------------------------------------------
-    # 6. ENGINE INITIALIZATION (KRITIS)
+    # 6. ENGINE REGISTRATION (FUNCTION-BASED, AMAN)
     # -------------------------------------------------
     if "engines" not in st.session_state:
         try:
-            from engines.pricing_engine import PricingEngine
-            from engines.guardrail_engine import GuardrailEngine
-            from engines.product_performance_engine import ProductPerformanceEngine
-            from engines.market_share_engine import MarketShareEngine
-            from engines.dcz_engine import DCZEngine
-            from engines.counter_move_engine import CounterMoveEngine
+            import engines.pricing_engine as pricing_engine
+            import engines.guardrail_engine as guardrail_engine
+            import engines.product_performance_engine as product_performance_engine
+            import engines.market_share_engine as market_share_engine
+            import engines.dcz_engine as dcz_engine
+            import engines.counter_move_engine as counter_move_engine
 
             st.session_state["engines"] = {
-                "pricing_engine": PricingEngine(),
-                "guardrail_engine": GuardrailEngine(),
-                "product_performance_engine": ProductPerformanceEngine(),
-                "market_share_engine": MarketShareEngine(),
-                "dcz_engine": DCZEngine(),
-                "counter_move_engine": CounterMoveEngine(),
+                "pricing_engine": pricing_engine,
+                "guardrail_engine": guardrail_engine,
+                "product_performance_engine": product_performance_engine,
+                "market_share_engine": market_share_engine,
+                "dcz_engine": dcz_engine,
+                "counter_move_engine": counter_move_engine,
             }
 
-            st.success("✅ Engines siap digunakan")
+            st.success("✅ Engines berhasil diregistrasi (function-based)")
 
         except Exception as e:
-            st.error(f"Gagal load engines: {e}")
+            st.error(f"❌ Gagal load engines: {e}")
 
     # -------------------------------------------------
-    # DEBUG (BOLEH DIHAPUS SETELAH OK)
+    # DEBUG (boleh dihapus setelah stabil)
     # -------------------------------------------------
     st.divider()
     st.caption("DEBUG session_state keys:")
