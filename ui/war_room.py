@@ -112,23 +112,30 @@ def render_war_room():
     st.divider()
 
     # =================================================
-    # PIPELINE (DEFENSIVE)
+    # PRICING SNAPSHOT (FIXED)
     # =================================================
-    # Pricing snapshot
     try:
-        war = engines["pricing_engine"](
-            price_company=price_company,
-            master=master_product,
-            price_competitor=price_competitor,
-        )
+        pricing_engine = engines["pricing_engine"]
+    
+        # pastikan fungsi ada
+        if hasattr(pricing_engine, "build_pricing_snapshot"):
+            war = pricing_engine.build_pricing_snapshot(
+                price_company=price_company,
+                master=master_product,
+                price_competitor=price_competitor,
+            )
+        else:
+            raise RuntimeError("build_pricing_snapshot not found")
+    
     except Exception as e:
-        st.error(f"Pricing engine gagal: {e}")
+        st.error(f"Pricing engine gagal (fallback): {e}")
         war = master_product.copy()
         war["price_sell"] = 0
         war["min_comp_price"] = None
         war["gap_price"] = None
         war["floor_price"] = 0
         war["guardrail_status"] = "ALLOWED"
+
 
     # Product performance
     try:
